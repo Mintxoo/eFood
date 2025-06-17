@@ -1,71 +1,55 @@
+// src/main/java/main/ClientHandler.java
 package main;
 
 import java.io.*;
 import java.net.Socket;
-import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 
-public class ClientHandler implements Runnable {
+public class ClientHandler implements Runnable, Serializable {
+    private static final long serialVersionUID = 1L;
+    
     private final Socket socket;
     private final MasterServer master;
-    private final String firstLine;
 
-    public ClientHandler(Socket socket, MasterServer master, String firstLine) {
+    public ClientHandler(Socket socket, MasterServer master) {
         this.socket = socket;
         this.master = master;
-        this.firstLine = firstLine;
     }
 
     @Override
     public void run() {
-        try (BufferedReader in = new BufferedReader(
-                 new InputStreamReader(socket.getInputStream()));
-             PrintWriter out = new PrintWriter(
-                 socket.getOutputStream(), true)) {
-
-            String line = firstLine;
-            do {
-                if (line.startsWith("SEARCH ")) {
-                    handleSearch(line.substring(7), out);
-                } else if (line.startsWith("BUY ")) {
-                    master.broadcast(new Message(Message.MessageType.SALE, line.substring(4)));
-                    out.println("{\"status\":\"OK\"}");
-                } else {
-                    out.println("ERROR: comando desconocido");
+        try (
+            ObjectOutputStream oos = new ObjectOutputStream(socket.getOutputStream());
+            ObjectInputStream  ois = new ObjectInputStream(socket.getInputStream());
+        ) {
+            Message msg;
+            while ((msg = (Message) ois.readObject()) != null) {
+                switch (msg.getType()) {
+                    case PING -> {
+                        oos.writeObject(new Message(Message.MessageType.PONG, "OK"));
+                    }
+                    case TASK -> {
+                        FilterSpec fs = (FilterSpec) msg.getPayload();
+                        List<MapResult> partials = master.dispatchMapTasks(fs);
+                        ReduceResult rr = new ReduceTask().combine(partials);
+                        oos.writeObject(new Message(Message.MessageType.RESULT, rr));
+                    }
+                    case SALE -> {
+                        // reenviamos la venta a todos los Workers
+                        master.broadcast(new Message(Message.MessageType.SALE, msg.getPayload()));
+                        oos.writeObject(new Message(Message.MessageType.RESULT, "OK"));
+                    }
+                    default -> {
+                        oos.writeObject(new Message(Message.MessageType.RESULT, 
+                                                   "ERROR: comando no soportado por ClientHandler"));
+                    }
                 }
-            } while ((line = in.readLine()) != null);
-
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private void handleSearch(String jsonParams, PrintWriter out) {
-        try {
-            com.fasterxml.jackson.databind.JsonNode n =
-                new com.fasterxml.jackson.databind.ObjectMapper().readTree(jsonParams);
-            FilterSpec fs = new FilterSpec(
-                n.get("latitude").asDouble(),
-                n.get("longitude").asDouble(),
-                jsonArrayToSet(n.withArray("foodCategories")),
-                n.get("minStars").asInt(),
-                PriceCategory.valueOf(n.get("priceCategory").asText())
-            );
-            List<MapResult> maps = master.dispatchMapTasks(fs);
-            ReduceResult rr = master.reduce(maps);
-            out.println(new com.fasterxml.jackson.databind.ObjectMapper()
-                .writeValueAsString(rr));
+                oos.flush();
+            }
+        } catch (EOFException eof) {
+            // cliente cerró conexión
         } catch (Exception e) {
-            out.println("ERROR en SEARCH: " + e.getMessage());
+            System.err.println("Error en ClientHandler: " + e);
         }
-    }
-
-    private Set<String> jsonArrayToSet(com.fasterxml.jackson.databind.JsonNode arr) {
-        Set<String> s = new HashSet<>();
-        Iterator<com.fasterxml.jackson.databind.JsonNode> it = arr.elements();
-        while (it.hasNext()) s.add(it.next().asText());
-        return s;
     }
 }

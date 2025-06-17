@@ -1,3 +1,4 @@
+// src/main/java/main/MasterServer.java
 package main;
 
 import java.io.*;
@@ -7,79 +8,96 @@ import java.util.*;
 
 public class MasterServer {
     private final int port;
-    private ServerSocket serverSocket;
     private final List<WorkerInfo> workers = new ArrayList<>();
-    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER =
-        new com.fasterxml.jackson.databind.ObjectMapper();
 
     public MasterServer(int port) {
         this.port = port;
     }
 
-    public void start() throws IOException {
-        serverSocket = new ServerSocket(port);
-        System.out.println("MasterServer escuchando en " + port);
-        while (!serverSocket.isClosed()) {
-            Socket sock = serverSocket.accept();
-            BufferedReader br = new BufferedReader(new InputStreamReader(sock.getInputStream()));
-            String peek = br.readLine();
-            if (peek != null && peek.startsWith("REGISTER ")) {
-                new Thread(new ManagerHandler(sock, this)).start();
-            } else {
-                new Thread(new ClientHandler(sock, this, peek)).start();
+    public void start() throws IOException, ClassNotFoundException {
+        try (ServerSocket server = new ServerSocket(port)) {
+            System.out.println("MasterServer escuchando en " + port);
+            while (true) {
+                Socket sock = server.accept();
+                // atender cada cliente/manager en un hilo:
+                new Thread(() -> handleConnection(sock)).start();
             }
         }
     }
 
-    public synchronized void registerWorker(WorkerInfo wi) {
-        workers.add(wi);
-        System.out.println("Worker registrado: " + wi);
+    private void handleConnection(Socket sock) {
+        try (sock;
+             ObjectInputStream  ois = new ObjectInputStream(sock.getInputStream());
+             ObjectOutputStream oos = new ObjectOutputStream(sock.getOutputStream())) {
+
+            Message msg;
+            while ((msg = (Message) ois.readObject()) != null) {
+                switch (msg.getType()) {
+                    case REGISTER -> {
+                        WorkerInfo w = (WorkerInfo) msg.getPayload();
+                        synchronized (workers) { workers.add(w); }
+                        oos.writeObject(new Message(Message.MessageType.RESULT, "OK"));
+                    }
+                    case TASK -> {
+                        FilterSpec fs = (FilterSpec) msg.getPayload();
+                        List<MapResult> partials = dispatchMapTasks(fs);
+                        ReduceResult rr = new ReduceTask().combine(partials);
+                        oos.writeObject(new Message(Message.MessageType.RESULT, rr));
+                    }
+                    case SALE -> {
+                        Object sale = msg.getPayload();
+                        broadcast(new Message(Message.MessageType.SALE, sale));
+                        oos.writeObject(new Message(Message.MessageType.RESULT, "OK"));
+                    }
+                    case REPORT -> {
+                        String type = (String) msg.getPayload();
+                        List<MapResult> partials = dispatchSalesReports(type);
+                        ReduceResult rr = new ReduceTask().combine(partials);
+                        oos.writeObject(new Message(Message.MessageType.RESULT, rr.getVentasPorKey()));
+                    }
+                    case PING -> {
+                        oos.writeObject(new Message(Message.MessageType.PONG, "OK"));
+                    }
+                    default -> {
+                        oos.writeObject(new Message(Message.MessageType.RESULT, "UNKNOWN"));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error en conexión: " + e.getMessage());
+        }
     }
 
-    public void broadcast(Message msg) {
+    private List<MapResult> dispatchMapTasks(FilterSpec fs) {
+        List<MapResult> res = new ArrayList<>();
+        for (WorkerInfo w : workers) {
+            try { res.add(new MapTask(fs, w).execute()); }
+            catch (Exception e) { System.err.println("MapTask falló en " + w + ": " + e); }
+        }
+        return res;
+    }
+
+    private List<MapResult> dispatchSalesReports(String type) {
+        List<MapResult> res = new ArrayList<>();
+        for (WorkerInfo w : workers) {
+            try { res.add(new ReportTask(type, w).execute()); }
+            catch (Exception e) { System.err.println("ReportTask falló en " + w + ": " + e); }
+        }
+        return res;
+    }
+
+    private void broadcast(Message msg) {
         for (WorkerInfo w : workers) {
             try (Socket s = new Socket(w.getHost(), w.getPort());
-                 PrintWriter out = new PrintWriter(s.getOutputStream(), true)) {
-                out.println(msg.toJson());
-            } catch (Exception e) {
+                 ObjectOutputStream oos = new ObjectOutputStream(s.getOutputStream())) {
+                oos.writeObject(msg);
+            } catch (IOException e) {
                 System.err.println("Broadcast fallo en " + w + ": " + e);
             }
         }
     }
 
-    public List<MapResult> dispatchMapTasks(FilterSpec fs) {
-        List<MapResult> res = new ArrayList<>();
-        for (WorkerInfo w : workers) {
-            try {
-                res.add(new MapTask(fs, w).execute());
-            } catch (IOException e) {
-                System.err.println("MapTask falló en " + w + ": " + e);
-            }
-        }
-        return res;
-    }
-
-    public List<MapResult> dispatchSalesReports(String type) {
-        List<MapResult> res = new ArrayList<>();
-        for (WorkerInfo w : workers) {
-            try {
-                res.add(new ReportTask(type, w).execute());
-            } catch (IOException e) {
-                System.err.println("ReportTask falló en " + w + ": " + e);
-            }
-        }
-        return res;
-    }
-
-    public ReduceResult reduce(List<MapResult> partials) {
-        return new ReduceTask().combine(partials);
-    }
-
-    public void stop() throws IOException {
-        serverSocket.close();
-    }
-
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws Exception {
         new MasterServer(5555).start();
     }
 }
