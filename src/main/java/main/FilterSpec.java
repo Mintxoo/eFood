@@ -1,10 +1,15 @@
 package main;
 
-
-
 import java.util.Set;
-import com.au.ds.model.PriceCategory;
 
+/**
+ * Especifica los criterios de búsqueda de un cliente:
+ * - Coordenadas
+ * - Radio fijo de 5 km
+ * - Categorías de comida
+ * - Estrellas mínimas
+ * - Categoría de precio
+ */
 public class FilterSpec {
     private static final double RADIUS_KM = 5.0;
 
@@ -45,4 +50,3 @@ public class FilterSpec {
                '}';
     }
 }
-

@@ -1,15 +1,14 @@
 package main;
 
-
-
+/**
+ * Stub simplificado de Restaurant para testing de MapResult/ReduceTask.
+ */
 public class Restaurant {
-    private String name;
-    private double latitude, longitude;
-    private String foodCategory;
-    private int stars;
-    private PriceCategory priceCategory;
-
-    public Restaurant() {}
+    private final String name;
+    private final double latitude, longitude;
+    private final String foodCategory;
+    private final int stars;
+    private final PriceCategory priceCategory;
 
     public Restaurant(String name, double latitude, double longitude,
                       String foodCategory, int stars, PriceCategory priceCategory) {
@@ -20,14 +19,6 @@ public class Restaurant {
         this.stars = stars;
         this.priceCategory = priceCategory;
     }
-
-    // getters
-    public String getName() { return name; }
-    public double getLatitude() { return latitude; }
-    public double getLongitude() { return longitude; }
-    public String getFoodCategory() { return foodCategory; }
-    public int getStars() { return stars; }
-    public PriceCategory getPriceCategory() { return priceCategory; }
 
     @Override
     public String toString() {

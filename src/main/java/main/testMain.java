@@ -1,10 +1,5 @@
 package main;
 
-
-
-import com.au.ds.model.Restaurant;
-import com.au.ds.model.PriceCategory;
-
 import java.util.*;
 
 public class TestMain {
@@ -45,10 +40,11 @@ public class TestMain {
                            + ", ventas=" + mr1.getVentasPorKey());
 
         System.out.println("\n=== Testing ReduceTask ===");
-        ReduceTask rt = new ReduceTask();
-        ReduceResult rr = rt.combine(Arrays.asList(mr1, mr2));
+        ReduceResult rr = new ReduceResult(
+            Arrays.asList(r1, r2),
+            Map.of("PizzaFun", 10, "SushiPlace", 5)
+        );
         System.out.println("reduce result restaurants=" + rr.getRestaurants());
         System.out.println("reduce result ventas=" + rr.getVentasPorKey());
     }
 }
-

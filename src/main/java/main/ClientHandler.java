@@ -1,11 +1,5 @@
 package main;
 
-
-
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.au.ds.model.PriceCategory;
-
 import java.io.*;
 import java.net.Socket;
 import java.util.HashSet;
@@ -13,17 +7,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Atiende SEARCH y BUY desde el cliente.
- */
 public class ClientHandler implements Runnable {
     private final Socket socket;
     private final MasterServer master;
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final String firstLine;
 
-    public ClientHandler(Socket socket, MasterServer master) {
+    public ClientHandler(Socket socket, MasterServer master, String firstLine) {
         this.socket = socket;
         this.master = master;
+        this.firstLine = firstLine;
     }
 
     @Override
@@ -33,16 +25,18 @@ public class ClientHandler implements Runnable {
              PrintWriter out = new PrintWriter(
                  socket.getOutputStream(), true)) {
 
-            String line;
-            while ((line = in.readLine()) != null) {
+            String line = firstLine;
+            do {
                 if (line.startsWith("SEARCH ")) {
                     handleSearch(line.substring(7), out);
                 } else if (line.startsWith("BUY ")) {
-                    handleBuy(line.substring(4), out);
+                    master.broadcast(new Message(Message.MessageType.SALE, line.substring(4)));
+                    out.println("{\"status\":\"OK\"}");
                 } else {
                     out.println("ERROR: comando desconocido");
                 }
-            }
+            } while ((line = in.readLine()) != null);
+
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -50,33 +44,28 @@ public class ClientHandler implements Runnable {
 
     private void handleSearch(String jsonParams, PrintWriter out) {
         try {
-            JsonNode node = MAPPER.readTree(jsonParams);
-            double lat = node.get("latitude").asDouble();
-            double lon = node.get("longitude").asDouble();
-            int stars = node.get("minStars").asInt();
-            PriceCategory pc = PriceCategory.valueOf(node.get("priceCategory").asText());
-            Set<String> cats = new HashSet<>();
-            Iterator<JsonNode> it = node.withArray("foodCategories").elements();
-            while (it.hasNext()) cats.add(it.next().asText());
-
-            FilterSpec filters = new FilterSpec(lat, lon, cats, stars, pc);
-            List<MapResult> maps = master.dispatchMapTasks(filters);
-            ReduceResult result = master.reduce(maps);
-            out.println(MAPPER.writeValueAsString(result));
+            com.fasterxml.jackson.databind.JsonNode n =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(jsonParams);
+            FilterSpec fs = new FilterSpec(
+                n.get("latitude").asDouble(),
+                n.get("longitude").asDouble(),
+                jsonArrayToSet(n.withArray("foodCategories")),
+                n.get("minStars").asInt(),
+                PriceCategory.valueOf(n.get("priceCategory").asText())
+            );
+            List<MapResult> maps = master.dispatchMapTasks(fs);
+            ReduceResult rr = master.reduce(maps);
+            out.println(new com.fasterxml.jackson.databind.ObjectMapper()
+                .writeValueAsString(rr));
         } catch (Exception e) {
             out.println("ERROR en SEARCH: " + e.getMessage());
         }
     }
 
-    private void handleBuy(String saleJson, PrintWriter out) {
-        try {
-            // reenviamos el JSON de la venta a todos los workers
-            Message msg = new Message(Message.MessageType.SALE, saleJson);
-            master.broadcast(msg);
-            out.println("{\"status\":\"OK\"}");
-        } catch (Exception e) {
-            out.println("ERROR en BUY: " + e.getMessage());
-        }
+    private Set<String> jsonArrayToSet(com.fasterxml.jackson.databind.JsonNode arr) {
+        Set<String> s = new HashSet<>();
+        Iterator<com.fasterxml.jackson.databind.JsonNode> it = arr.elements();
+        while (it.hasNext()) s.add(it.next().asText());
+        return s;
     }
 }
-
